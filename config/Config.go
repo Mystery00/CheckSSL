@@ -9,7 +9,6 @@ import (
 
 type Config struct {
 	ConfigFile    string `env:"CONFIG_FILE,required"`
-	ScriptFile    string `env:"SCRIPT_FILE,required"`
 	RedisHost     string `env:"REDIS_HOST" envDefault:"localhost:6379"`
 	RedisPassword string `env:"REDIS_PASSWORD" envDefault:""`
 	RedisDatabase int    `env:"REDIS_DATABASE" envDefault:"0"`

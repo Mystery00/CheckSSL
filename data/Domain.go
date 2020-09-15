@@ -2,14 +2,14 @@ package data
 
 import (
 	"context"
+	"crypto/tls"
 	json2 "encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/tidwall/gjson"
 
-	"CheckSSL/config"
 	"CheckSSL/utils"
 )
 
@@ -17,10 +17,9 @@ type DomainSave struct {
 	Name          string
 	LastCheckTime string
 	Subject       string
-	From          int64
-	Until         int64
+	From          time.Time
+	Until         time.Time
 	Issuer        string
-	Message       string
 }
 
 type Domain struct {
@@ -31,19 +30,29 @@ type Domain struct {
 	Until         string
 	Remain        string
 	Issuer        string
-	Message       string
+	Valid         bool
 }
 
 func (d *Domain) DoCheck(rdb *redis.Client, ctx context.Context) {
-	json := utils.Cmd("/bin/bash", "-c", config.EnvConfig.ScriptFile+" "+d.Name)
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+	seedUrl := "https://" + d.Name
+	resp, err := client.Get(seedUrl)
+	defer resp.Body.Close()
+	if err != nil {
+		panic(err)
+	}
+
+	certInfo := resp.TLS.PeerCertificates[0]
 	save := DomainSave{
 		Name:          d.Name,
 		LastCheckTime: time.Now().Format("2006-02-01 15:04:05.000"),
-		Subject:       gjson.Get(json, "subject").String(),
-		From:          gjson.Get(json, "start").Int(),
-		Until:         gjson.Get(json, "expire").Int(),
-		Issuer:        gjson.Get(json, "issuer").String(),
-		Message:       gjson.Get(json, "message").String(),
+		Subject:       certInfo.Subject.String(),
+		From:          certInfo.NotBefore,
+		Until:         certInfo.NotAfter,
+		Issuer:        certInfo.Issuer.String(),
 	}
 
 	jsonBytes, err := json2.Marshal(save)
@@ -85,13 +94,12 @@ func (d *Domain) DoCheckLocal(ctx context.Context) {
 }
 
 func parse(save DomainSave, d *Domain) {
-	from := time.Unix(0, save.From*int64(time.Millisecond))
-	until := time.Unix(0, save.Until*int64(time.Millisecond))
-	d.From = from.Format("2006-02-01 15:04:05.000")
-	d.Until = until.Format("2006-02-01 15:04:05.000")
-	d.Remain = fmt.Sprintf("%d days", int(time.Until(until).Hours()/24))
+	d.From = save.From.Format("2006-02-01 15:04:05.000")
+	d.Until = save.Until.Format("2006-02-01 15:04:05.000")
+	remain := int(time.Until(save.Until).Hours() / 24)
+	d.Remain = fmt.Sprintf("%d days", remain)
 	d.LastCheckTime = save.LastCheckTime
 	d.Subject = save.Subject
 	d.Issuer = save.Issuer
-	d.Message = save.Message
+	d.Valid = remain > 0
 }
